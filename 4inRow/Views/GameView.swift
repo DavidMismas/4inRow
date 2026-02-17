@@ -18,24 +18,27 @@ struct GameView: View {
     @State private var gameOverShakeOffset: CGFloat = 0
 
     var body: some View {
-        GeometryReader { geo in
-            let isLandscape = geo.size.width > geo.size.height
+        ZStack {
+            vm.theme.backgroundColor.ignoresSafeArea()
 
-            ZStack {
-                vm.theme.backgroundColor.ignoresSafeArea()
+            GeometryReader { geo in
+                let isLandscape = geo.size.width > geo.size.height
 
-                if isLandscape {
-                    landscapeLayout(geo: geo)
-                } else {
-                    portraitLayout(geo: geo)
+                ZStack {
+                    if isLandscape {
+                        landscapeLayout(geo: geo)
+                    } else {
+                        portraitLayout(geo: geo)
+                    }
+
+                    if showGameOver {
+                        gameOverOverlay
+                            .transition(.opacity)
+                    }
                 }
-
-                if showGameOver {
-                    gameOverOverlay
-                        .transition(.opacity)
-                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .animation(.easeInOut(duration: 0.3), value: vm.theme)
             }
-            .animation(.easeInOut(duration: 0.3), value: vm.theme)
         }
         .sheet(isPresented: $showSettings) {
             SettingsSheet(vm: vm)

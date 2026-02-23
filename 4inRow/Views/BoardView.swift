@@ -98,7 +98,7 @@ struct BoardView: View {
                     }
                 }
                 .frame(width: gridWidth, height: gridHeight)
-                .allowsHitTesting(vm.hasGameStarted)
+                .allowsHitTesting(vm.canHumanDrop)
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }

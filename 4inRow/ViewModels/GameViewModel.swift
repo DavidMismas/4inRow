@@ -17,6 +17,7 @@ final class GameViewModel {
     var hapticEnabled: Bool
     var stats: GameStats
     var isAIThinking = false
+    var isDropAnimating = false
 
     /// Who starts each game: .human or .ai
     var firstPlayer: Player
@@ -39,6 +40,11 @@ final class GameViewModel {
 
     /// Reference to in-flight AI task so we can cancel on restart.
     private var aiTask: Task<Void, Never>?
+    private var activeDropAnimations = 0
+    private var gameRevision = 0
+
+    private let dropAnimationResponse: TimeInterval = 0.42
+    private let dropSettleDelay: TimeInterval = 0.5
 
     // MARK: - Init
 
@@ -58,9 +64,7 @@ final class GameViewModel {
     func dropDisc(col: Int) {
         guard hasGameStarted else { return }
 
-        guard gameState == .playing,
-              currentPlayer == .human,
-              !isAIThinking else {
+        guard canHumanDrop else {
             if hapticEnabled { haptic.invalidMove() }
             if soundEnabled { sound.playInvalid() }
             return
@@ -92,11 +96,14 @@ final class GameViewModel {
         // Cancel any in-flight AI task
         aiTask?.cancel()
         aiTask = nil
+        gameRevision += 1
 
         board = Board()
         gameState = .playing
         currentPlayer = firstPlayer
         isAIThinking = false
+        isDropAnimating = false
+        activeDropAnimations = 0
         dropOffsets = [:]
         winningCells = []
 
@@ -145,19 +152,7 @@ final class GameViewModel {
 
     private func performDrop(col: Int, player: Player) {
         guard let row = board.dropDisc(col: col, player: player) else { return }
-
-        // Trigger drop animation: start offset high, animate to 0
-        let key = "\(col)-\(row)"
-        let rowsFromTop = CGFloat((Board.rows - 1) - row)
-        dropOffsets[key] = -rowsFromTop
-
-        // Defer the animated settle one run loop so the initial offset renders first.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            withAnimation(.interactiveSpring(response: 0.42, dampingFraction: 0.72)) {
-                self.dropOffsets[key] = 0
-            }
-        }
+        animateDrop(col: col, row: row)
 
         if hapticEnabled { haptic.discDrop() }
         if soundEnabled { sound.playDrop() }
@@ -192,6 +187,7 @@ final class GameViewModel {
 
         let boardCopy = board
         let diff = difficulty
+        let revision = gameRevision
 
         // Run AI on background thread to keep UI responsive
         aiTask = Task.detached { [ai] in
@@ -205,6 +201,7 @@ final class GameViewModel {
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                guard self.gameRevision == revision else { return }
 
                 // Double-check game is still active and it's still AI's turn
                 guard self.gameState == .playing,
@@ -240,6 +237,40 @@ final class GameViewModel {
     }
 
     // MARK: - View Helpers
+
+    var canHumanDrop: Bool {
+        hasGameStarted &&
+        gameState == .playing &&
+        currentPlayer == .human &&
+        !isAIThinking &&
+        !isDropAnimating
+    }
+
+    private func animateDrop(col: Int, row: Int) {
+        let revision = gameRevision
+        let key = "\(col)-\(row)"
+        let rowsFromTop = CGFloat((Board.rows - 1) - row)
+
+        activeDropAnimations += 1
+        isDropAnimating = true
+        dropOffsets[key] = -rowsFromTop
+
+        // Defer to next run loop so the initial offset renders before we animate to zero.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.gameRevision == revision else { return }
+            withAnimation(.interactiveSpring(response: self.dropAnimationResponse, dampingFraction: 0.72)) {
+                self.dropOffsets[key] = 0
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + dropSettleDelay) { [weak self] in
+            guard let self, self.gameRevision == revision else { return }
+            // Fail-safe: if animation was interrupted, force the disc to its settled position.
+            self.dropOffsets[key] = 0
+            self.activeDropAnimations = max(0, self.activeDropAnimations - 1)
+            self.isDropAnimating = self.activeDropAnimations > 0
+        }
+    }
 
     func colorForCell(col: Int, row: Int) -> Color {
         let val = board.cell(col: col, row: row)
